@@ -26,7 +26,7 @@ const plotH = CHART.height - CHART.padTop - CHART.padBottom;
 
 export default function SurvivalCurveModal({ client, globalToday, onClose }: SurvivalCurveModalProps) {
   const [tooltip, setTooltip] = useState<{ x: number; y: number; day: number; prob: number } | null>(null);
-  
+
   const [templates, setTemplates] = useState<any[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
   const [sending, setSending] = useState(false);
@@ -155,9 +155,9 @@ export default function SurvivalCurveModal({ client, globalToday, onClose }: Sur
 
     const t = templates.find(x => x.id === selectedTemplateId);
     if (!t) {
-        setError("No hay plantilla seleccionada");
-        setSending(false);
-        return;
+      setError("No hay plantilla seleccionada");
+      setSending(false);
+      return;
     }
 
     const vars = [client.businessName || '', client.estimatedNextPurchaseDate || ''];
@@ -167,12 +167,13 @@ export default function SurvivalCurveModal({ client, globalToday, onClose }: Sur
     }];
 
     try {
-      const response = await fetch('http://localhost:3000/api/whatsapp/send', {
+      const response = await fetch('/api/whatsapp/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           phone: client.phone,
-          templateName: t.id,
+          templateName: t.name,
+          language: t.language,
           components: components
         })
       });
@@ -555,7 +556,7 @@ export default function SurvivalCurveModal({ client, globalToday, onClose }: Sur
               ) : (
                 <Send className="h-3 w-3" />
               )}
-              {success ? 'Mensaje Enviado' : 'Enviar Automático'}
+              {success ? 'Enviado' : 'Enviar'}
             </button>
             <button
               onClick={onClose}

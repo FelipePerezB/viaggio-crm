@@ -172,7 +172,7 @@ export default function ManageTemplatesModal({ onClose }: ManageTemplatesModalPr
                                             type="text"
                                             value={newName}
                                             onChange={(e) => setNewName(e.target.value)}
-                                            placeholder="Ej: Recordatorio de Reposición"
+                                            placeholder="compra_web"
                                             className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-700 focus:outline-none focus:border-slate-400"
                                         />
                                     </div>

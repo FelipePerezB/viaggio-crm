@@ -427,7 +427,7 @@ export default function GoogleSheetsManager({ onExtractionComplete }: GoogleShee
                 className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 px-3 py-1.5 text-[11px] font-semibold transition active:scale-[0.98] cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <RefreshCw className={`h-3 w-3 ${isSyncing && !syncingId ? 'animate-spin' : ''}`} />
-                Sincronizar todo
+                Sincronizar
               </button>
             </>
           )}

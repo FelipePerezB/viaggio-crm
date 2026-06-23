@@ -2,7 +2,9 @@ import { NextResponse } from 'next/server';
 
 export async function POST(req: Request) {
   try {
-    const { phone, templateName, components } = await req.json();
+    const { phone, templateName, components, language } = await req.json();
+
+    console.log(templateName)
 
     if (!phone || !templateName) {
       return NextResponse.json({ success: false, error: 'Faltan parámetros: phone o templateName' }, { status: 400 });
@@ -12,7 +14,6 @@ export async function POST(req: Request) {
     const WHATSAPP_ACCESS_TOKEN = process.env.WHATSAPP_ACCESS_TOKEN;
     const WHATSAPP_PHONE_NUMBER_ID = process.env.WHATSAPP_PHONE_NUMBER_ID;
 
-    console.log(WHATSAPP_ACCESS_TOKEN, WHATSAPP_PHONE_NUMBER_ID, templateName)
     if (!WHATSAPP_ACCESS_TOKEN || !WHATSAPP_PHONE_NUMBER_ID) {
       return NextResponse.json({
         success: false,
@@ -31,9 +32,8 @@ export async function POST(req: Request) {
       template: {
         name: templateName,
         language: {
-          code: "en"// Asumimos español como idioma de la plantilla
+          code: language// Asumimos español como idioma de la plantilla
         },
-        components: components || []
       }
     };
 
