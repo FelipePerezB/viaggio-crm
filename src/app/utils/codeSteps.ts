@@ -35,6 +35,10 @@ export const codeSteps = async ({ addLog, setUploadStep, uint8Arrays, isCsv }: {
     await micropip.install("openpyxl");
     addLog("¡Librería 'openpyxl' instalada correctamente!");
 
+    addLog("Descargando e instalando 'lifelines==0.27.8' (modelo AFT original)...");
+    await micropip.install("lifelines==0.27.8")
+    addLog("¡Librería 'lifelines==0.27.8' instalada correctamente!");
+
     setUploadStep(3); // Paso 3: Análisis y Proyecciones con Pandas
     addLog("Transfiriendo archivos binarios de excel como bytes de memoria a Python...");
     pyRuntime.globals.set("excel_bytes_list", pyRuntime.toPy(uint8Arrays));

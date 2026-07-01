@@ -52,16 +52,28 @@ export default function SurvivalCurveModal({ client, globalToday, onClose }: Sur
     return Math.max(0, Math.ceil((globalToday.getTime() - lp.getTime()) / (1000 * 60 * 60 * 24)));
   }, [client.lastPurchaseDate, globalToday]);
 
-  // Current purchase probability (1 - survival)
+  // Conditional purchase probability in the next 7 days: 1 - (surv_7d / surv_today)
   const currentPurchaseProb = useMemo(() => {
     if (curve.length === 0) return 0;
-    let closest = curve[0];
-    for (const pt of curve) {
-      if (Math.abs(pt.day - daysPassed) < Math.abs(closest.day - daysPassed)) {
-        closest = pt;
+    
+    const getSurvAtDay = (targetDay: number) => {
+      let closest = curve[0];
+      for (const pt of curve) {
+        if (Math.abs(pt.day - targetDay) < Math.abs(closest.day - targetDay)) {
+          closest = pt;
+        }
       }
+      return closest.probability;
+    };
+
+    const survToday = getSurvAtDay(daysPassed);
+    const surv7d = getSurvAtDay(daysPassed + 7);
+
+    if (survToday > 0) {
+      const probBuyNext7d = 1.0 - (surv7d / survToday);
+      return Math.round(probBuyNext7d * 100);
     }
-    return Math.round((1 - closest.probability) * 100);
+    return 100;
   }, [curve, daysPassed]);
 
   // ── Coordinate mapping ─────────────────────────────────────
@@ -502,11 +514,11 @@ export default function SurvivalCurveModal({ client, globalToday, onClose }: Sur
               <span className="text-[9px] text-slate-400">P20–P80</span>
             </div>
             <div className="rounded-lg bg-slate-50 border border-slate-100 p-2.5 space-y-0.5">
-              <span className="text-[8px] font-bold uppercase tracking-wider text-slate-400 block">P(compra)</span>
+              <span className="text-[8px] font-bold uppercase tracking-wider text-slate-400 block">P(próx. 7d)</span>
               <span className={`text-sm font-bold font-mono block ${currentPurchaseProb >= 80 ? 'text-red-600' : currentPurchaseProb >= 50 ? 'text-amber-600' : 'text-emerald-600'}`}>
                 {currentPurchaseProb}%
               </span>
-              <span className="text-[9px] text-slate-400">hoy (día {daysPassed})</span>
+              <span className="text-[9px] text-slate-400">desde hoy ({daysPassed}d)</span>
             </div>
             <div className="rounded-lg bg-slate-50 border border-slate-100 p-2.5 space-y-0.5">
               <span className="text-[8px] font-bold uppercase tracking-wider text-slate-400 block">Predicción</span>

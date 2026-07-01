@@ -219,7 +219,7 @@ export default function App() {
       c.preferredFlavor.toLowerCase().includes(searchTerm.toLowerCase()) ||
       c.phone.includes(searchTerm);
 
-    // Lógica precalculada en Python: supervivencia hoy > 95%, en 7 días < 50%, y <= 90 días sin pedir
+    // Lógica precalculada en Python: probabilidad de comprar durante la proxima semana (desde hoy + 7 días) superior al 30%
     const hasHighPurchaseProbability = c.shouldContact === true;
 
     const matchesStatus = statusFilter === 'All' || c.status === statusFilter;
@@ -395,7 +395,7 @@ export default function App() {
                       <th className="py-3 px-4">Fecha Pedido</th>
                       <th className="py-3 px-4">Cliente</th>
                       <th className="py-3 px-4">Ubicación</th>
-                      <th className="py-3 px-4 text-center">Volumen</th>
+                      <th className="py-3 px-4 text-center">LTV</th>
                       <th className="py-3 px-4 text-center">Comodato</th>
                     </tr>
                   </thead>

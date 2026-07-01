@@ -129,6 +129,26 @@ def normalizar_cliente(nombre_sucio):
         clients.append(nombre_sin_paren.title())
         return nombre_sin_paren.title()
 
+def clasificar_tipo_relacion(contexto_raw):
+
+    if pd.isna(contexto_raw) or str(contexto_raw).strip().lower() in ('nan', '', 'none'):
+        return 'libre'
+    
+    ctx = str(contexto_raw).strip().lower()
+    
+    # Comodato / con máquina
+    if 'maquina' in ctx or 'máquina' in ctx:
+        return 'comodato'
+    
+    # Franquicia (incluyendo typo "fraquicia")
+    if 'franquicia' in ctx or 'fraquicia' in ctx:
+        return 'franquicia'
+    
+    # Libre (nan ya manejado arriba)
+    
+    # Todo lo demás: opciones, nuevo cliente, nuevo precio, con permiso
+    return 'otro'
+
 raw_data = []
 
 # Process multiple files if passed as excel_bytes_list, or fallback to a single file if excel_bytes_list is not present
@@ -165,11 +185,14 @@ for file_idx, f_bytes in enumerate(bytes_list_to_process):
                         amount = data_row[3] if len(data_row) > 3 else 15
                         delivery_date = data_row[4] if len(data_row) > 4 else ""
                         
-                        comodato = 0
+                  
                         if i - 1 >= 0:
                             prev_row = df_raw.iloc[i-1]
                             if len(prev_row) > 0:
-                                comodato = 1 if str(prev_row[0]).strip().lower() == "con maquina" else 0
+                                comodato_context_raw = str(prev_row[0]).strip()
+                        
+                        tipo_relacion = clasificar_tipo_relacion(comodato_context_raw)
+                        comodato = 1 if tipo_relacion == 'comodato' else 0
                         
                         def parse_date_safe(d_val):
                             if isinstance(d_val, datetime.datetime):
@@ -177,20 +200,25 @@ for file_idx, f_bytes in enumerate(bytes_list_to_process):
                             if isinstance(d_val, datetime.date):
                                 return datetime.datetime.combine(d_val, datetime.time.min)
                             try:
-                                return pd.to_datetime(str(d_val)).to_pydatetime()
+                                return pd.to_datetime(d_str).to_pydatetime()
                             except Exception:
-                                return simulated_today
+                                return None
                         
                         parsed_del_dt = parse_date_safe(delivery_date)
                         parsed_ord_dt = parse_date_safe(order_date)
+                    
+                        # Si no hay fecha de pedido, usar today como fallback
+                        if parsed_ord_dt is None:
+                            parsed_ord_dt = simulated_today
                         
                         raw_data.append({
                             "location": location,
                             "client": client,
                             "order_date": parsed_ord_dt,
                             "amount": amount,
-                            "delivery_date": parsed_del_dt,
-                            "comodato": comodato
+                            "delivery_date": parsed_del_dt if parsed_del_dt is not None else parsed_ord_dt,
+                            "comodato": comodato,
+                            "tipo_relacion": tipo_relacion
                         })
                 except Exception as ex:
                     print(f"Error parseando fila {i} en archivo {file_idx}: {str(ex)}")
@@ -279,18 +307,21 @@ if 'user_data_rules' in globals():
             df[col] = df[col].replace(mapping)
             print(f"[FASE 1] Aplicados {len(mapping)} reemplazos de usuario en columna '{col}'.")
 
-try:
-    df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(15).astype(int)
-except Exception:
-     df['amount'] = 15
-     
-df = df.drop_duplicates()
-df = df.sort_values(by=['client', 'order_date']).reset_index(drop=True)
-print(f"[FASE 1] Completada con éxito. Se importaron {len(df)} registros consolidables.")
+
+            # Limpiar símbolos de moneda y puntos de miles antes de convertir a número
+    try:
+        df['amount'] = df['amount'].astype(str).str.replace(r'[\$\s\.]', '', regex=True)
+        df['amount'] = pd.to_numeric(df['amount'], errors='coerce').fillna(15).astype(int)
+    except Exception:
+        df['amount'] = 15
+    
+    df = df.sort_values(by=['client', 'order_date']).reset_index(drop=True)
+    print(f"[FASE 1] Completada con éxito. Se importaron {len(df)} registros consolidables.")
 
 # =========================================================================
 # FASE 2: CÁLCULO DE VARIABLES EXPLICATIVAS Y COVARIABLES (Feature Engineering)
 # =========================================================================
+
 print("[FASE 2] Calculando variables explicativas y covariables para el análisis de supervivencia...")
 
 # Calcular el tiempo de supervivencia (tiempo_días) y el indicador de evento (evento_recompra)
@@ -327,8 +358,9 @@ condiciones = [
     df['tarifa_exacta'].isin([6000, 7000]),
     df['tarifa_exacta'].isin([7001, 10000])
 ]
-niveles = ['Tarifa_Baja', 'Tarifa_Media']
-df['nivel_despacho'] = np.select(condiciones, niveles, default='Tarifa_Alta')
+niveles = ['Tarifa_Baja', 'Tarifa_Alta']
+df['nivel_despacho'] = np.select(condiciones, niveles, default='Tarifa_Baja')
+
 
 # Calcular características del comportamiento histórico del pedido
 df['monto_promedio'] = df.groupby('client')['amount'].transform(lambda x: x.expanding().mean())
@@ -354,6 +386,13 @@ df['Log_Amount'] = np.log1p(np.where(previous_order_ratio.isna(),
                                      df['amount'] / df['monto_promedio'],
                                      previous_order_ratio))
 
+df = df.sort_values(by=['client', 'order_date'])
+df['compras_ultimos_60_dias'] = df.groupby('client').apply(
+    lambda x: x.rolling('60D', on='order_date')['amount'].count() - 1
+).reset_index(level=0, drop=True)
+
+df['compras_ultimos_60_dias'] = df['compras_ultimos_60_dias'].fillna(0)
+
 df['siguiente'] = df.groupby('client')['order_date'].shift(-1)
 max_date = df['order_date'].max()
 df['Dias_hasta_siguiente'] = np.where(df['siguiente'].notna(),
@@ -361,10 +400,13 @@ df['Dias_hasta_siguiente'] = np.where(df['siguiente'].notna(),
                                       (max_date - df['order_date']).dt.days + 1)
 df['Evento'] = np.where(df['siguiente'].notna(), 1, 0)
 
+
+
 mediana_dhs = df['Dias_hasta_siguiente'].median()
 if pd.isna(mediana_dhs) or np.isnan(mediana_dhs):
     mediana_dhs = 14.0
 df['Log_Inercia'] = np.log1p(df.groupby('client')['Dias_hasta_siguiente'].shift(1).fillna(mediana_dhs))
+df['Inercia_x_Comodato'] = df['Log_Inercia'] * df['comodato']
 
 df['ltv_historico'] = df.groupby('client')['amount'].transform(lambda x: x.cumsum().shift(1)).fillna(0)
 df['cliente_frecuente'] = df['num_compra_historica'].apply(lambda x: 1 if x > 3 else 0)
@@ -381,7 +423,45 @@ for col in cols_to_clip:
     if not pd.isna(p99):
         df[col] = df[col].clip(upper=p99)
 
+# --- NUEVO: Cálculo de Estacionalidad (Hemisferio Sur) ---
+df['mes_compra'] = df['order_date'].dt.month
+condiciones_temporada = [
+    df['mes_compra'].isin([10, 11,12, 1, 2]),  # Temporada Alta
+    df['mes_compra'].isin([3, 4, 5, 6, 7, 8, 9])  # Temporada Baja
+]
+niveles_temporada = ['Alta', 'Baja']
+df['temporada'] = np.select(condiciones_temporada, niveles_temporada, default='Baja')
+
+# =====================================================
+# NUEVAS FEATURES: Enriquecimiento del modelo AFT v2
+# =====================================================
+# 1. Lead time de entrega (días entre pedido y entrega) - indicador de complejidad logística
+df['lead_time_dias'] = (df['delivery_date'] - df['order_date']).dt.days.fillna(0)
+df['lead_time_dias'] = np.maximum(df['lead_time_dias'], 0)
+df['log_lead_time'] = np.log1p(df['lead_time_dias'])
+# 2. Estacionalidad mensual con transformación cíclica sin/cos
+df['mes_pedido'] = df['order_date'].dt.month
+df['mes_sin'] = np.sin(2 * np.pi * df['mes_pedido'] / 12)
+df['mes_cos'] = np.cos(2 * np.pi * df['mes_pedido'] / 12)
+# 3. Tendencia de monto: ratio entre monto actual y promedio histórico del cliente
+#    >1 = monto creciendo, <1 = monto decreciendo, ~1 = estable
+df['tendencia_monto'] = np.where(
+    df['monto_promedio'] > 0,
+    df['amount'] / df['monto_promedio'],
+    1.0
+)
+df['log_tendencia_monto'] = np.log1p(df['tendencia_monto'].clip(0.1, 10.0))
+# 4. Flag de cliente nuevo (primera compra del cliente)
+df['es_cliente_nuevo'] = (df['num_compra_historica'] == 1).astype(int)
+# 5. Flag de franquicia (modelo de negocio distinto → comportamiento de compra diferente)
+df['es_franquicia'] = (df['tipo_relacion'] == 'franquicia').astype(int)
+# 6. Día de la semana del pedido (complementa es_restock_semana con más granularidad)
+df['dia_semana_sin'] = np.sin(2 * np.pi * df['order_date'].dt.dayofweek / 7)
+
+
 print("[FASE 2] Completada. Covariables de DataFrame construidas con éxito.")
+
+
 
 # =========================================================================
 # FASE 3: ENTRENAMIENTO DEL MODELO AFT (Survival Regression Fitting)
@@ -395,12 +475,19 @@ columnas_modelo = [
     'evento_recompra',
     'log_ltv_historico',
     "comodato",
-    "intervalo_promedio",
-    'nivel_despacho'
+    'temporada',
+    'compras_ultimos_60_dias',
+    'log_lead_time',
+    'mes_sin',
+    'mes_cos',
+    'log_tendencia_monto',
+    'es_cliente_nuevo',
+    'es_franquicia',
+    'intervalo_promedio'
 ]
 
 df_modelo = df[columnas_modelo].copy()
-df_modelo = pd.get_dummies(df_modelo, columns=['nivel_despacho'], drop_first=True)
+df_modelo = pd.get_dummies(df_modelo, columns=['temporada'], drop_first=True)
 
 # Asegurar compatibilidad para tipos en model_cols
 for col in df_modelo.columns:
@@ -411,14 +498,42 @@ aft_summary_str = ""
 model_fit_success = False
 
 try:
-    from lifelines import LogNormalAFTFitter
-    # Instanciamos el modelo con una pequeña penalización de regularización L2 (sugerido 0.01)
-    aft = LogNormalAFTFitter(penalizer=0.01)
-    aft.fit(df_modelo, duration_col='tiempo_días', event_col='evento_recompra', robust=True)
+    from lifelines import LogLogisticAFTFitter 
+    from lifelines.utils import concordance_index
+
+    # Instanciamos el modelo con una pequeña penalización L2
+    aft = LogLogisticAFTFitter(penalizer=0.05)
+
+    aft.fit(
+        df_modelo,
+        duration_col="tiempo_días",
+        event_col="evento_recompra",
+        robust=True,
+        ancillary=True
+    )
+
     summary_df = aft.summary
     aft_summary_str = summary_df.to_string()
     model_fit_success = True
-    print("[FASE 3] ¡Ajuste de LogNormalAFTFitter de lifelines completado con éxito!")
+
+    print(aft_summary_str)
+
+    # Predicción del tiempo esperado hasta el evento
+    pred_expectation = aft.predict_expectation(df_modelo)
+
+    # Índice de concordancia
+    pred_median = aft.predict_median(df_modelo)
+
+    c_index = concordance_index(
+        df_modelo["tiempo_días"],
+        -pred_expectation,
+        df_modelo["evento_recompra"]
+    )
+
+    print(f"[FASE 3] ¡Ajuste de LogLogisticAFTFitter completado con éxito!")
+    print(f"C-index: {c_index:.4f}")
+    print(f"AIC: {aft.AIC_:.2f}")
+    print(f"Log-likelihood: {aft.log_likelihood_:.2f}")
 except Exception as e:
     aft_summary_str = f"No se pudo entrenar lifelines: {str(e)} -> Activando estimador heurístico robusto log-normal."
     print(f"[FASE 3] Heurístico: {aft_summary_str}")
@@ -432,7 +547,7 @@ print("[FASE 4] Realizando predicciones probabilísticas de supervivencia para l
 df_ultimos = df.sort_values(by=['client', 'order_date']).groupby('client').last().reset_index()
 
 X_pred = df_ultimos[columnas_modelo].copy()
-X_pred = pd.get_dummies(X_pred, columns=['nivel_despacho'], drop_first=True)
+X_pred = pd.get_dummies(X_pred, columns=['temporada'], drop_first=True)
 
 # Alinear columnas con el modelo de entrenamiento para que coincidan de manera idéntica
 columnas_entrenamiento = df_modelo.drop(columns=['tiempo_días', 'evento_recompra']).columns
@@ -581,7 +696,7 @@ for idx, row in df_ultimos.iterrows():
             })
 
     # --- Calcular shouldContact ---
-    # Criterios: supervivencia hoy > 95%, supervivencia en 7 días < 50%, y no más de 90 días sin pedir
+    # Criterios: probabilidad de comprar durante la proxima semana (desde hoy + 7 días) superior al 30%
     days_since_last = (simulated_today - del_date_val).days
     days_since_last = max(0, days_since_last)
 
@@ -599,8 +714,12 @@ for idx, row in df_ultimos.iterrows():
     surv_7d = get_surv_at_day(curve_points, days_since_last + 7)
 
     should_contact = False
-    if surv_today is not None and surv_7d is not None and days_since_last <= 90 and days_since_last >= 4 :
-        should_contact = surv_today > 0.05 and surv_7d < 0.50
+    if surv_today is not None and surv_7d is not None:
+        if surv_today > 0:
+            prob_buy_next_7d = 1.0 - (surv_7d / surv_today)
+            should_contact = prob_buy_next_7d > 0.25
+        else:
+            should_contact = True
 
     clients_extracted.append({
         'id': f"client_{limpiar_texto(client_name).replace(' ', '_')}_{idx}",
